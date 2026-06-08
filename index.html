@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>LIFF requestFriendship Debug</title>
+
+  <!-- liff.requestFriendship() は LIFF v2.28.0 で追加されたため、edge/2 を利用 -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      margin: 16px;
+      line-height: 1.5;
+    }
+    input, button {
+      font-size: 16px;
+      padding: 8px;
+      margin: 4px 0;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    button {
+      cursor: pointer;
+    }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+    .row {
+      margin-bottom: 12px;
+    }
+    .hint {
+      font-size: 13px;
+      color: #555;
+    }
+    pre {
+      background: #111;
+      color: #eee;
+      padding: 12px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      border-radius: 6px;
+      min-height: 240px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>LIFF requestFriendship Debug</h1>
+
+  <div class="row">
+    <label for="liffId">LIFF ID</label>
+    <input id="liffId" placeholder="例: 1234567890-AbCdEfGh" />
+    <div class="hint">
+      URLに ?liffId=xxxx を付けても指定できます。実際に検証中のDeveloping / Review / PublishedのLIFF IDを入れてください。
+    </div>
+  </div>
+
+  <div class="row">
+    <button id="initBtn">1. liff.init() を実行</button>
+    <button id="getFriendshipBtn" disabled>2. liff.getFriendship() を実行</button>
+    <button id="requestFriendshipBtn" disabled>3. liff.requestFriendship() を実行</button>
+    <button id="copyBtn">ログをコピー</button>
+    <button id="clearBtn">ログをクリア</button>
+  </div>
+
+  <pre id="log"></pre>
+
+  <script>
+    const DEFAULT_LIFF_ID = "2010329979-M7ZKXD90";
+
+    const $liffId = document.getElementById("liffId");
+    const $log = document.getElementById("log");
+    const $initBtn = document.getElementById("initBtn");
+    const $getFriendshipBtn = document.getElementById("getFriendshipBtn");
+    const $requestFriendshipBtn = document.getElementById("requestFriendshipBtn");
+    const $copyBtn = document.getElementById("copyBtn");
+    const $clearBtn = document.getElementById("clearBtn");
+
+    const params = new URLSearchParams(location.search);
+    $liffId.value = params.get("liffId") || DEFAULT_LIFF_ID;
+
+    let initialized = false;
+    const logs = [];
+
+    function now() {
+      return new Date().toISOString();
+    }
+
+    function mask(value, visible = 6) {
+      if (!value || typeof value !== "string") return value;
+      if (value.length <= visible * 2) return "***";
+      return value.slice(0, visible) + "...(masked)..." + value.slice(-visible);
+    }
+
+    function safeJson(value) {
+      return JSON.stringify(value, null, 2);
+    }
+
+    function appendLog(label, value) {
+      const entry = {
+        time: now(),
+        label,
+        value,
+      };
+      logs.push(entry);
+
+      $log.textContent += `\n[${entry.time}] ${label}\n`;
+      $log.textContent += typeof value === "string" ? value : safeJson(value);
+      $log.textContent += "\n";
+      console.log(label, value);
+    }
+
+    function toPlainError(error) {
+      return {
+        name: error?.name || null,
+        code: error?.code || null,
+        message: error?.message || String(error),
+        cause: error?.cause || null,
+        raw: String(error),
+      };
+    }
+
+    function safeCall(label, fn) {
+      try {
+        return fn();
+      } catch (error) {
+        return {
+          error: label,
+          detail: toPlainError(error),
+        };
+      }
+    }
+
+    function sanitizeContext(context) {
+      if (!context) return null;
+
+      const copied = {};
+      for (const [key, value] of Object.entries(context)) {
+        if (key === "userId") {
+          copied.userIdMasked = mask(value);
+        } else if (key === "accessTokenHash") {
+          copied.accessTokenHashMasked = mask(value);
+        } else {
+          copied[key] = value;
+        }
+      }
+
+      return copied;
+    }
+
+    function getRuntimeSnapshot(stage) {
+      const context = safeCall("liff.getContext()", () => liff.getContext());
+
+      return {
+        stage,
+        page: {
+          href: location.href,
+          userAgent: navigator.userAgent,
+        },
+        liff: {
+          id: safeCall("liff.id", () => liff.id),
+          sdkVersion: safeCall("liff.getVersion()", () => liff.getVersion?.()),
+          lineVersion: safeCall("liff.getLineVersion()", () => liff.getLineVersion?.()),
+          os: safeCall("liff.getOS()", () => liff.getOS?.()),
+          language: safeCall("liff.getLanguage()", () => liff.getLanguage?.()),
+          isInClient: safeCall("liff.isInClient()", () => liff.isInClient?.()),
+          isLoggedIn: safeCall("liff.isLoggedIn()", () => liff.isLoggedIn?.()),
+          hasAccessToken: safeCall("liff.getAccessToken()", () => Boolean(liff.getAccessToken?.())),
+          hasRequestFriendshipMethod: typeof liff.requestFriendship === "function",
+          hasGetFriendshipMethod: typeof liff.getFriendship === "function",
+        },
+        context: sanitizeContext(context),
+        diagnostics: buildDiagnostics(context),
+      };
+    }
+
+    function buildDiagnostics(context) {
+      const diagnostics = [];
+
+      if (!context || context.error) {
+        diagnostics.push("liff.getContext() が取得できていません。liff.init() の失敗、または実行環境を確認してください。");
+        return diagnostics;
+      }
+
+      if (context.liffId && liff.id && context.liffId !== liff.id) {
+        diagnostics.push("context.liffId と liff.id が一致していません。liff.init() に渡したLIFF IDと起動URLのLIFF IDを確認してください。");
+      }
+
+      if (context.viewType !== "full") {
+        diagnostics.push("viewType が full ではありません。liff.requestFriendship() はFull画面でのみ利用できます。");
+      }
+
+      if (!Array.isArray(context.scope) || !context.scope.includes("profile")) {
+        diagnostics.push("profile スコープがありません。liff.requestFriendship() 自体には不要ですが、liff.getFriendship() で友だち状態を確認するには profile が必要です。");
+      }
+
+      if (typeof liff.requestFriendship !== "function") {
+        diagnostics.push("liff.requestFriendship が存在しません。LIFF SDKのバージョン、読み込みURL、LINEアプリ側のバージョンを確認してください。");
+      }
+
+      return diagnostics;
+    }
+
+    async function initLiff() {
+      const liffId = $liffId.value.trim();
+
+      if (!liffId || liffId === DEFAULT_LIFF_ID) {
+        appendLog("ERROR", "LIFF IDを入力してください。");
+        return;
+      }
+
+      appendLog("START", {
+        action: "liff.init",
+        liffId,
+      });
+
+      try {
+        await liff.init({
+          liffId,
+          withLoginOnExternalBrowser: true,
+        });
+
+        initialized = true;
+        $getFriendshipBtn.disabled = false;
+        $requestFriendshipBtn.disabled = false;
+
+        appendLog("liff.init SUCCESS", getRuntimeSnapshot("after liff.init"));
+
+        if (!liff.isLoggedIn()) {
+          appendLog("INFO", "未ログインです。外部ブラウザで開いている場合は liff.login() が必要なケースがあります。");
+        }
+      } catch (error) {
+        appendLog("liff.init FAILED", toPlainError(error));
+        appendLog("snapshot", getRuntimeSnapshot("after liff.init failed"));
+      }
+    }
+
+    async function checkFriendship() {
+      if (!initialized) {
+        appendLog("ERROR", "先に liff.init() を実行してください。");
+        return;
+      }
+
+      appendLog("BEFORE liff.getFriendship()", getRuntimeSnapshot("before liff.getFriendship"));
+
+      try {
+        const result = await liff.getFriendship();
+
+        appendLog("liff.getFriendship SUCCESS", {
+          result,
+          interpretation: result?.friendFlag === true
+            ? "友だち追加済み、かつブロックされていない状態です。"
+            : "未追加、ブロック中、または友だち関係を確認できない状態です。",
+        });
+      } catch (error) {
+        appendLog("liff.getFriendship FAILED", {
+          error: toPlainError(error),
+          note: "getFriendship() は profile スコープが必要です。requestFriendship() の失敗原因とは分けて判断してください。",
+        });
+      }
+    }
+
+    async function requestFriendship() {
+      if (!initialized) {
+        appendLog("ERROR", "先に liff.init() を実行してください。");
+        return;
+      }
+
+      appendLog("BEFORE liff.requestFriendship()", getRuntimeSnapshot("before liff.requestFriendship"));
+
+      if (typeof liff.requestFriendship !== "function") {
+        appendLog("ERROR", "liff.requestFriendship が存在しません。LIFF SDKが古い、または対応していない環境の可能性があります。");
+        return;
+      }
+
+      try {
+        const result = await liff.requestFriendship();
+
+        appendLog("liff.requestFriendship SUCCESS", {
+          result: result ?? null,
+          note: "requestFriendship() の戻り値だけでは、ユーザーが友だち追加・ブロック解除したかは確認できません。必要に応じて getFriendship() で確認してください。",
+        });
+
+        appendLog("AFTER liff.requestFriendship()", getRuntimeSnapshot("after liff.requestFriendship"));
+      } catch (error) {
+        appendLog("liff.requestFriendship FAILED", {
+          error: toPlainError(error),
+          likelyCauses: [
+            "実行中のLIFF IDにリンクされたLINE公式アカウントが設定されていない",
+            "Developing / Review / Published の内部チャネル違い",
+            "LIFFアプリの画面サイズが Full ではない",
+            "設定変更が検証対象の内部チャネルに反映されていない",
+          ],
+        });
+      }
+    }
+
+    async function copyLog() {
+      const text = $log.textContent || "";
+      try {
+        await navigator.clipboard.writeText(text);
+        appendLog("INFO", "ログをクリップボードにコピーしました。");
+      } catch (error) {
+        appendLog("COPY FAILED", toPlainError(error));
+      }
+    }
+
+    $initBtn.addEventListener("click", initLiff);
+    $getFriendshipBtn.addEventListener("click", checkFriendship);
+    $requestFriendshipBtn.addEventListener("click", requestFriendship);
+    $copyBtn.addEventListener("click", copyLog);
+    $clearBtn.addEventListener("click", () => {
+      logs.length = 0;
+      $log.textContent = "";
+    });
+  </script>
+</body>
+</html>
