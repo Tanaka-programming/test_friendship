@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="ja">
 <head>
@@ -205,31 +206,31 @@
       return diagnostics;
     }
 
-    function initLiff() {
+    async function initLiff() {
       const liffId = $liffId.value.trim();
-    
+
       if (!liffId) {
         appendLog("ERROR", "LIFF IDを入力してください。");
         return;
       }
-    
+
       appendLog("START", {
         action: "liff.init",
         liffId,
       });
-    
+
       try {
         await liff.init({
           liffId,
           withLoginOnExternalBrowser: true,
         });
-    
+
         initialized = true;
         $getFriendshipBtn.disabled = false;
         $requestFriendshipBtn.disabled = false;
-    
+
         appendLog("liff.init SUCCESS", getRuntimeSnapshot("after liff.init"));
-    
+
         if (!liff.isLoggedIn()) {
           appendLog("INFO", "未ログインです。外部ブラウザで開いている場合は liff.login() が必要なケースがあります。");
         }
